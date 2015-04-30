@@ -58,6 +58,8 @@
 #endif
 #include <sys/stat.h>
 
+#include "gdb_wait.h"
+
 #if USE_WIN32API
 #include <winsock2.h>
 #endif
@@ -239,6 +241,14 @@ remote_prepare (char *name)
       return;
     }
 
+#ifndef USE_WIN32API
+  if (name[0] == '|')
+    {
+      transport_is_reliable = 1;
+      return;
+    }
+#endif
+
   port_str = strchr (name, ':');
   if (port_str == NULL)
     {
@@ -280,6 +290,61 @@ remote_prepare (char *name)
   transport_is_reliable = 1;
 }
 
+#ifndef USE_WIN32API
+static int
+open_shell_command (const char *command)
+{
+  int sockets[2];
+  pid_t child, grandchild, res;
+  int status;
+
+  if (socketpair (AF_LOCAL, SOCK_STREAM, 0, sockets) < 0)
+    perror_with_name ("Can't get socketpair");
+
+  child = fork ();
+  if (child < 0)
+    {
+      perror_with_name ("Can't fork");
+    }
+  else if (child == 0)
+    {
+      if (close (sockets[0]) < 0)
+	perror_with_name ("Can't close socket");
+      if (dup2 (sockets[1], STDIN_FILENO) < 0
+	  || dup2 (sockets[1], STDOUT_FILENO) < 0)
+	perror_with_name ("Can't dup socket to stdio");
+      if (sockets[1] != STDIN_FILENO && sockets[1] != STDOUT_FILENO
+	  && close (sockets[1]) < 0)
+	perror_with_name ("Can't close original socket");
+
+      /* Double fork in order to inherit the grandchild.  The process
+	 is expected to exit when the other end of the socketpair is
+	 closed.  */
+      grandchild = fork ();
+      if (grandchild < 0)
+	perror_with_name ("Can't double fork command process");
+      if (grandchild != 0)
+	exit (0);
+      execl ("/bin/sh", "sh", "-c", command, NULL);
+      perror_with_name ("Can't exec command");
+    }
+  else
+    {
+      if (close (sockets[1]) < 0)
+	perror_with_name ("Can't close socket");
+      signal (SIGPIPE, SIG_IGN);
+      while ((res = waitpid (child, &status, 0)) < 0 && errno == EINTR);
+      if (res < 0)
+	perror_with_name ("Can't wait for the child process");
+      if (!WIFEXITED (status) || WEXITSTATUS (status))
+	perror_with_name ("Child process did not terminate correctly");
+      return sockets[0];
+     }
+
+  return -1;
+}
+#endif
+
 /* Open a connection to a remote debugger.
    NAME is the filename used for communication.  */
 
@@ -287,6 +352,17 @@ void
 remote_open (char *name)
 {
   char *port_str;
+
+#ifndef USE_WIN32API
+  if (name[0] == '|')
+    {
+      fprintf (stderr, "Remote debugging using shell command\n");
+      remote_desc = open_shell_command (name + 1);
+      enable_async_notification (remote_desc);
+      add_file_handler (remote_desc, handle_serial_event, NULL);
+      return;
+    }
+#endif
 
   port_str = strchr (name, ':');
 #ifdef USE_WIN32API
