@@ -3037,6 +3037,7 @@ gdbserver_usage (FILE *stream)
 	   "\tgdbserver [OPTIONS] --multi COMM\n"
 	   "\n"
 	   "COMM may be a tty device (for serial debugging),\n"
+	   "an existing pathname stream-oriented socket,\n"
 	   "'|some shell command' to use stdin/stdout of a given shell command,\n"
 	   "HOST:PORT to listen for a TCP connection, or '-' or 'stdio' to use \n"
 	   "stdin/stdout of gdbserver.\n"

@@ -36,6 +36,9 @@
 #if HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
 #endif
+#if HAVE_SYS_UN_H
+#include <sys/un.h>
+#endif
 #if HAVE_NETDB_H
 #include <netdb.h>
 #endif
@@ -345,6 +348,33 @@ open_shell_command (const char *command)
 }
 #endif
 
+#ifndef USE_WIN32API
+static int
+socket_open (const char *name)
+{
+  int sock;
+  struct sockaddr_un addr;
+
+  if (strlen (name) >= sizeof (addr.sun_path))
+    return -1;
+
+  sock = socket (AF_UNIX, SOCK_STREAM, 0);
+  if (sock < 0)
+    return -1;
+
+  addr.sun_family = AF_UNIX;
+  strcpy (addr.sun_path, name);
+  if (connect (sock, (const struct sockaddr *) &addr,
+	       sizeof (struct sockaddr_un)) < 0)
+    {
+      close (sock);
+      return -1;
+    }
+
+  return sock;
+}
+#endif
+
 /* Open a connection to a remote debugger.
    NAME is the filename used for communication.  */
 
@@ -387,10 +417,18 @@ remote_open (char *name)
   else if (port_str == NULL)
     {
       struct stat statbuf;
+      int res;
 
-      if (stat (name, &statbuf) == 0
+      res = stat (name, &statbuf);
+      if (res == 0
 	  && (S_ISCHR (statbuf.st_mode) || S_ISFIFO (statbuf.st_mode)))
-	remote_desc = open (name, O_RDWR);
+	{
+	  remote_desc = open (name, O_RDWR);
+	}
+      else if (res == 0 && S_ISSOCK (statbuf.st_mode))
+	{
+	  remote_desc = socket_open (name);
+	}
       else
 	{
 	  errno = EINVAL;
